@@ -1,6 +1,7 @@
 import pygame
 import random
-from typing import Set, List, Tuple
+from typing import Set, List, Tuple, Dict, Optional
+from pygame.sprite import Sprite, Group
 
 # 初始化 Pygame
 pygame.init()
@@ -18,48 +19,97 @@ class GameConstants:
     GRID_WIDTH = WINDOW_X // SNAKE_BLOCK
     GRID_HEIGHT = WINDOW_Y // SNAKE_BLOCK
 
+class SnakeSegment(Sprite):
+    """蛇身段精灵类"""
+    def __init__(self, x: float, y: float, size: int, color: Tuple[int, int, int]):
+        super().__init__()
+        self.image = pygame.Surface([size, size])
+        self.image.fill(color)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
+class Food(Sprite):
+    """食物精灵类"""
+    def __init__(self, x: float, y: float, size: int, color: Tuple[int, int, int]):
+        super().__init__()
+        self.image = pygame.Surface([size, size])
+        self.image.fill(color)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+
 class SnakeGame:
     def __init__(self):
+        pygame.init()
         # 初始化游戏窗口和资源
         self.game_window = pygame.display.set_mode((GameConstants.WINDOW_X, GameConstants.WINDOW_Y))
         pygame.display.set_caption('贪吃蛇游戏')
+        
+        # 创建缓冲surface以提高绘制效率
+        self.buffer_surface = pygame.Surface(self.game_window.get_size())
+        self.buffer_surface = self.buffer_surface.convert()
+        
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 50)
         self.game_over_message = self.font.render("Game Over! Press R to Restart", True, GameConstants.RED)
         
-        # 初始化游戏状态
-        self.reset_game()
+        # 创建精灵组
+        self.snake_sprites = Group()
+        self.food_sprite = None
         
-        # 预计算所有可能的食物位置
-        self.all_positions = {(x * GameConstants.SNAKE_BLOCK, y * GameConstants.SNAKE_BLOCK) 
-                            for x in range(GameConstants.GRID_WIDTH) 
-                            for y in range(GameConstants.GRID_HEIGHT)}
+        # 初始化位置缓存
+        self._init_position_cache()
+        self.reset_game()
+
+    def _init_position_cache(self) -> None:
+        """预计算并缓存所有可能的位置"""
+        self.all_positions = [(x * GameConstants.SNAKE_BLOCK, y * GameConstants.SNAKE_BLOCK)
+                            for x in range(GameConstants.GRID_WIDTH)
+                            for y in range(GameConstants.GRID_HEIGHT)]
+        # 创建位置查找字典以加速碰撞检测
+        self.position_lookup: Dict[Tuple[float, float], bool] = {}
     
     def reset_game(self) -> None:
         """重置游戏状态"""
         self.running = True
         self.game_over = False
-        self.snake_positions: Set[Tuple[float, float]] = set()
-        self.snake_list: List[Tuple[float, float]] = []
+        self.position_lookup.clear()
+        self.snake_sprites.empty()
+        self.snake_list = []
         self.length_of_snake = 1
+        
+        # 初始化蛇的位置
         self.snake_x = GameConstants.WINDOW_X // 2
         self.snake_y = GameConstants.WINDOW_Y // 2
         self.snake_dx = 0
         self.snake_dy = 0
-        self.food_pos = self.generate_food()
+        
+        # 创建初始蛇身
+        initial_segment = SnakeSegment(self.snake_x, self.snake_y, 
+                                     GameConstants.SNAKE_BLOCK, GameConstants.GREEN)
+        self.snake_sprites.add(initial_segment)
+        self.snake_list.append((self.snake_x, self.snake_y))
+        self.position_lookup[(self.snake_x, self.snake_y)] = True
+        
+        # 生成食物
+        self._create_food()
+
+    def _create_food(self) -> None:
+        """创建新的食物精灵"""
+        if self.food_sprite:
+            self.food_sprite.kill()
+        
+        food_pos = self.generate_food()
+        self.food_sprite = Food(food_pos[0], food_pos[1],
+                              GameConstants.SNAKE_BLOCK, GameConstants.GREEN)
 
     def generate_food(self) -> Tuple[float, float]:
-        """使用集合操作高效生成食物位置"""
-        available_positions = self.all_positions - self.snake_positions
+        """优化的食物生成算法"""
+        available_positions = [pos for pos in self.all_positions if pos not in self.position_lookup]
         if not available_positions:
-            return (0, 0)  # 游戏胜利条件
-        return random.choice(tuple(available_positions))
-
-    def draw_snake(self) -> None:
-        """使用列表推导式高效绘制蛇身"""
-        [pygame.draw.rect(self.game_window, GameConstants.GREEN, 
-                        [pos[0], pos[1], GameConstants.SNAKE_BLOCK, GameConstants.SNAKE_BLOCK])
-         for pos in self.snake_list]
+            return (0, 0)
+        return random.choice(available_positions)
 
     def handle_input(self) -> None:
         """处理用户输入"""
@@ -88,7 +138,7 @@ class SnakeGame:
             self.snake_dy = GameConstants.SNAKE_BLOCK
 
     def update_game_state(self) -> None:
-        """更新游戏状态"""
+        """优化的游戏状态更新"""
         if self.game_over:
             return
 
@@ -103,38 +153,49 @@ class SnakeGame:
             self.game_over = True
             return
 
-        # 更新蛇身位置集合和列表
+        # 检查自身碰撞
+        if current_pos in self.position_lookup:
+            self.game_over = True
+            return
+
+        # 创建新的蛇头
+        new_segment = SnakeSegment(self.snake_x, self.snake_y,
+                                 GameConstants.SNAKE_BLOCK, GameConstants.GREEN)
+        self.snake_sprites.add(new_segment)
         self.snake_list.append(current_pos)
-        self.snake_positions.add(current_pos)
-        
+        self.position_lookup[current_pos] = True
+
         # 检查是否吃到食物
-        if current_pos == self.food_pos:
+        if (self.snake_x == self.food_sprite.rect.x and 
+            self.snake_y == self.food_sprite.rect.y):
             self.length_of_snake += 1
-            self.food_pos = self.generate_food()
+            self._create_food()
         else:
             # 如果没吃到食物，移除蛇尾
             if len(self.snake_list) > self.length_of_snake:
                 tail_pos = self.snake_list.pop(0)
-                self.snake_positions.remove(tail_pos)
-
-        # 检查是否碰到自己（使用集合提高效率）
-        if current_pos in set(self.snake_list[:-1]):
-            self.game_over = True
+                del self.position_lookup[tail_pos]
+                # 移除最后一个精灵
+                oldest_sprite = next(iter(self.snake_sprites))
+                oldest_sprite.kill()
 
     def draw(self) -> None:
-        """绘制游戏画面"""
-        self.game_window.fill(GameConstants.BLACK)
+        """优化的绘制函数"""
+        # 清空缓冲区
+        self.buffer_surface.fill(GameConstants.BLACK)
         
         if self.game_over:
-            self.game_window.blit(self.game_over_message, 
-                                [GameConstants.WINDOW_X // 6, GameConstants.WINDOW_Y // 3])
+            self.buffer_surface.blit(self.game_over_message,
+                                   [GameConstants.WINDOW_X // 6, GameConstants.WINDOW_Y // 3])
         else:
-            pygame.draw.rect(self.game_window, GameConstants.GREEN,
-                           [self.food_pos[0], self.food_pos[1], 
-                            GameConstants.SNAKE_BLOCK, GameConstants.SNAKE_BLOCK])
-            self.draw_snake()
-        
-        pygame.display.update()
+            # 使用精灵组进行绘制
+            self.snake_sprites.draw(self.buffer_surface)
+            if self.food_sprite:
+                self.food_sprite.draw(self.buffer_surface)
+
+        # 将缓冲区内容复制到屏幕
+        self.game_window.blit(self.buffer_surface, (0, 0))
+        pygame.display.flip()
 
     def run(self) -> None:
         """运行游戏主循环"""
