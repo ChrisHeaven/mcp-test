@@ -27,14 +27,14 @@ class SnakeGame:
         self.font = pygame.font.SysFont(None, 50)
         self.game_over_message = self.font.render("Game Over! Press R to Restart", True, GameConstants.RED)
         
+        # 预计算所有可能的食物位置
+        self.all_positions = {(x * GameConstants.SNAKE_BLOCK, y * GameConstants.SNAKE_BLOCK)
+                            for x in range(GameConstants.GRID_WIDTH)
+                            for y in range(GameConstants.GRID_HEIGHT)}
+
         # 初始化游戏状态
         self.reset_game()
-        
-        # 预计算所有可能的食物位置
-        self.all_positions = {(x * GameConstants.SNAKE_BLOCK, y * GameConstants.SNAKE_BLOCK) 
-                            for x in range(GameConstants.GRID_WIDTH) 
-                            for y in range(GameConstants.GRID_HEIGHT)}
-    
+
     def reset_game(self) -> None:
         """重置游戏状态"""
         self.running = True
